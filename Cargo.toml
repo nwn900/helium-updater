@@ -1,0 +1,17 @@
+[package]
+name = "helium-updater"
+version = "0.2.0"
+edition = "2024"
+description = "Windows GUI updater for the Helium browser"
+publish = false
+
+[dependencies]
+eframe = { version = "0.33", default-features = false, features = ["default_fonts", "glow"] }
+image = { version = "0.25", default-features = false, features = ["jpeg"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[build-dependencies]
+ico = "0.4"
+image = { version = "0.25", default-features = false, features = ["jpeg"] }
+winresource = "0.1"
