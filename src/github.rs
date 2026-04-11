@@ -3,6 +3,9 @@ use crate::{
 };
 use serde::Deserialize;
 
+pub const RELEASES_REPOSITORY_SLUG: &str = "imputnet/helium-windows";
+pub const RELEASES_REPOSITORY_URL: &str = "https://github.com/imputnet/helium-windows/releases";
+
 const RELEASES_ENDPOINT: &str =
     "https://api.github.com/repos/imputnet/helium-windows/releases/latest";
 

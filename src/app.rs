@@ -1,4 +1,7 @@
-use crate::service::{AppService, DashboardSnapshot};
+use crate::{
+    github::{RELEASES_REPOSITORY_SLUG, RELEASES_REPOSITORY_URL},
+    service::{AppService, DashboardSnapshot},
+};
 use eframe::egui::{self, Color32, Frame, RichText};
 use std::sync::mpsc::{self, Receiver};
 
@@ -87,6 +90,18 @@ impl eframe::App for HeliumUpdaterApp {
                             ui.label(
                                 RichText::new("Rust GUI for daily Helium installs and updates")
                                     .size(14.0)
+                                    .color(Color32::from_rgb(91, 98, 113)),
+                            );
+                            ui.label(
+                                RichText::new(format!(
+                                    "Release source: {RELEASES_REPOSITORY_SLUG}"
+                                ))
+                                    .size(13.0)
+                                    .color(Color32::from_rgb(91, 98, 113)),
+                            );
+                            ui.label(
+                                RichText::new(RELEASES_REPOSITORY_URL)
+                                    .size(12.0)
                                     .color(Color32::from_rgb(91, 98, 113)),
                             );
                         });

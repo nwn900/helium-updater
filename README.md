@@ -5,7 +5,7 @@ Windows GUI updater for the Helium browser, written in Rust.
 ## What it does
 
 - Shows the currently installed Helium version.
-- Checks the latest release from `imputnet/helium-windows`.
+- Checks the latest Windows release from `https://github.com/imputnet/helium-windows/releases`.
 - Downloads and installs the latest Windows Helium build.
 - Creates a daily scheduled task so updates can run automatically in the background.
 - Lets the user disable or re-enable the automatic updater from the GUI.
@@ -30,6 +30,13 @@ The Windows executable is created at:
 ```text
 target\release\helium-updater.exe
 ```
+
+## GitHub Actions
+
+The repository includes a Windows build workflow at `.github/workflows/build-windows.yml`.
+
+It compiles the release EXE on `windows-latest` and uploads `target\release\helium-updater.exe`
+as a GitHub Actions artifact named `helium-updater-windows`.
 
 ## Background mode
 
