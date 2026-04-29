@@ -72,7 +72,7 @@ pub fn fetch_latest_release() -> AppResult<ReleaseInfo> {
         r#"
 $headers = @{{
     'Accept' = 'application/vnd.github+json'
-    'User-Agent' = 'HeliumBrowserUpdater/0.2.1'
+    'User-Agent' = 'HeliumBrowserUpdater/0.2.2'
 }}
 Invoke-RestMethod -Headers $headers -Uri '{endpoint}' | ConvertTo-Json -Depth 8 -Compress
 "#,
@@ -112,7 +112,7 @@ fn extract_chromium_version(body: &str) -> Option<String> {
         }
     }
 
-    normalize_version_string(body)
+    None
 }
 
 fn friendly_timestamp(value: &str) -> String {

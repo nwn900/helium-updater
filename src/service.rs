@@ -64,13 +64,23 @@ impl AppService {
     }
 
     pub fn initial_snapshot(&self) -> DashboardSnapshot {
+        let config = Config::load(&self.paths).unwrap_or_default();
+        let installed = detect_installed_helium().ok().flatten();
+        let state = State::load(&self.paths).unwrap_or_default();
+        let scheduled_task_present = scheduler::daily_task_exists().unwrap_or(false);
+
+        let release = fetch_latest_release().ok();
+        let update_available = release.as_ref().map(|r| {
+            self.compute_update_available(installed.as_ref(), r, &state)
+        });
+
         self.compose_snapshot(
-            Config::load(&self.paths).unwrap_or_default(),
-            State::load(&self.paths).unwrap_or_default(),
-            detect_installed_helium().ok().flatten(),
-            None,
-            None,
-            scheduler::daily_task_exists().unwrap_or(false),
+            config,
+            state,
+            installed,
+            release,
+            update_available,
+            scheduled_task_present,
         )
     }
 
@@ -165,7 +175,6 @@ impl AppService {
                 "Starting a manual Helium install or update.",
             );
 
-            let config = Config::load(&service.paths)?;
             let mut state = State::load(&service.paths)?;
             let installed = detect_installed_helium()?;
             let release = fetch_latest_release()?;
@@ -185,7 +194,10 @@ impl AppService {
             }
 
             if let Some(helium) = installed.as_ref() {
-                service.ensure_ready_for_installation(helium, &config)?;
+                if is_running(helium)? {
+                    logging::warn(&service.paths, "Helium is running; attempting to close it for manual install.");
+                    close_running(helium)?;
+                }
             }
 
             let asset = release.select_installer_asset(NativeArchitecture::detect())?;
@@ -270,7 +282,16 @@ impl AppService {
                 return Ok(());
             }
 
-            service.ensure_ready_for_installation(&installed, &config)?;
+            if is_running(&installed)? {
+                if config.close_running_helium {
+                    logging::warn(&service.paths, "Helium is running; the updater will close it.");
+                    close_running(&installed)?;
+                } else {
+                    logging::warn(&service.paths, "Helium is running; background update skipped.");
+                    return Ok(());
+                }
+            }
+
             let asset = release.select_installer_asset(NativeArchitecture::detect())?;
             let installer_path = service.download_asset(&asset)?;
             service.run_installer(&installer_path)?;
@@ -411,24 +432,6 @@ impl AppService {
         }
 
         true
-    }
-
-    fn ensure_ready_for_installation(
-        &self,
-        helium: &InstalledHelium,
-        config: &Config,
-    ) -> AppResult<()> {
-        if !is_running(helium)? {
-            return Ok(());
-        }
-
-        if config.close_running_helium {
-            logging::warn(&self.paths, "Helium is running; the updater will close it.");
-            close_running(helium)?;
-            return Ok(());
-        }
-
-        Err("Helium is currently running. Close the browser, or enable close_running_helium in %LOCALAPPDATA%\\HeliumUpdater\\config.json".to_owned())
     }
 
     fn download_asset(&self, asset: &ReleaseAsset) -> AppResult<PathBuf> {
