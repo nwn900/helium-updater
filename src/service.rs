@@ -33,6 +33,7 @@ pub struct DashboardSnapshot {
     pub status_message: String,
     pub architecture_label: String,
     pub is_installed: bool,
+    pub pending_update_notification: Option<String>,
 }
 
 impl DashboardSnapshot {
@@ -154,6 +155,13 @@ impl AppService {
         self.startup_refresh()
     }
 
+    pub fn dismiss_pending_notification(&self) -> AppResult<DashboardSnapshot> {
+        let mut state = State::load(&self.paths)?;
+        state.pending_update_notification = None;
+        state.save(&self.paths)?;
+        Ok(self.initial_snapshot())
+    }
+
     pub fn delete_scheduled_task(&self) -> AppResult<DashboardSnapshot> {
         let mut config = Config::load(&self.paths)?;
         config.automatic_updates_enabled = false;
@@ -228,6 +236,7 @@ impl AppService {
                 None => format!("Helium {} installer finished.", release.tag_name),
             });
             state.last_error = None;
+            state.pending_update_notification = None;
             state.save(&service.paths)?;
 
             logging::info(&service.paths, "Manual Helium install or update completed.");
@@ -288,6 +297,18 @@ impl AppService {
                     close_running(&installed)?;
                 } else {
                     logging::warn(&service.paths, "Helium is running; background update skipped.");
+                    state.pending_update_notification = Some(format!(
+                        "Helium {} is available but could not install because Helium is running. Open the updater to install manually.",
+                        release.tag_name
+                    ));
+                    state.last_checked_at = Some(current_timestamp()?);
+                    state.last_seen_release_tag = Some(release.tag_name);
+                    state.last_seen_product_version = release.chromium_version;
+                    state.latest_release_published_at = Some(release.published_at);
+                    state.installed_display_version = installed.current_version();
+                    state.installed_product_version = installed.product_version.clone();
+                    state.last_error = None;
+                    state.save(&service.paths)?;
                     return Ok(());
                 }
             }
@@ -378,6 +399,7 @@ impl AppService {
             is_installed: installed
                 .as_ref()
                 .is_some_and(InstalledHelium::is_installed),
+            pending_update_notification: state.pending_update_notification.clone(),
         }
     }
 
@@ -446,7 +468,7 @@ impl AppService {
         let script = format!(
             r#"
 $headers = @{{
-    'User-Agent' = 'HeliumBrowserUpdater/0.2.0'
+    'User-Agent' = 'HeliumBrowserUpdater/0.3.0'
     'Accept' = 'application/octet-stream'
 }}
 Invoke-WebRequest -Headers $headers -Uri '{url}' -OutFile '{destination}'

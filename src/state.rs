@@ -13,6 +13,7 @@ pub struct State {
     pub installed_product_version: Option<String>,
     pub last_status_message: Option<String>,
     pub last_error: Option<String>,
+    pub pending_update_notification: Option<String>,
 }
 
 impl State {
