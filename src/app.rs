@@ -377,7 +377,7 @@ impl eframe::App for HeliumUpdaterApp {
                             );
 
                             if self.is_busy() {
-                                ui.add_space(8.0);
+                                ui.add_space(12.0);
                                 ui.horizontal(|ui| {
                                     ui.spinner();
                                     ui.label(
@@ -389,7 +389,7 @@ impl eframe::App for HeliumUpdaterApp {
                             }
                         });
 
-                        ui.add_space(8.0);
+                        ui.add_space(40.0);
                     });
             });
 
@@ -510,6 +510,6 @@ fn configure_theme(ctx: &egui::Context) {
     style.visuals = visuals;
     style.spacing.item_spacing = egui::vec2(12.0, 12.0);
     style.spacing.button_padding = egui::vec2(14.0, 10.0);
-    style.spacing.window_margin = egui::Margin::same(18);
+    style.spacing.window_margin = egui::Margin::symmetric(10, 10);
     ctx.set_style(style);
 }
