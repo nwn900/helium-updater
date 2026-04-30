@@ -72,7 +72,7 @@ pub fn fetch_latest_release() -> AppResult<ReleaseInfo> {
         r#"
 $headers = @{{
     'Accept' = 'application/vnd.github+json'
-    'User-Agent' = 'HeliumBrowserUpdater/0.3.0'
+    'User-Agent' = 'HeliumBrowserUpdater/0.3.1'
 }}
 Invoke-RestMethod -Headers $headers -Uri '{endpoint}' | ConvertTo-Json -Depth 8 -Compress
 "#,

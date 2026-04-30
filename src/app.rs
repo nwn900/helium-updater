@@ -10,13 +10,7 @@ pub struct HeliumUpdaterApp {
     snapshot: DashboardSnapshot,
     pending_action: Option<Receiver<Result<DashboardSnapshot, String>>>,
     notification_dismissed: bool,
-    pending_command: Option<Command>,
-}
-
-#[derive(Clone, Copy)]
-enum Command {
-    InstallNow,
-    DismissNotification,
+    show_confirm: bool,
 }
 
 impl HeliumUpdaterApp {
@@ -24,15 +18,13 @@ impl HeliumUpdaterApp {
         configure_theme(&creation_context.egui_ctx);
 
         let snapshot = service.initial_snapshot();
-        let mut app = Self {
+        Self {
             service,
             snapshot,
             pending_action: None,
             notification_dismissed: false,
-            pending_command: None,
-        };
-        app.spawn_action(|service| service.startup_refresh());
-        app
+            show_confirm: false,
+        }
     }
 
     fn is_busy(&self) -> bool {
@@ -48,40 +40,21 @@ impl HeliumUpdaterApp {
             Ok(Ok(snapshot)) => {
                 self.snapshot = snapshot;
                 self.pending_action = None;
+                self.show_confirm = false;
             }
             Ok(Err(error)) => {
                 let mut fallback = self.service.initial_snapshot();
                 fallback.status_message = error;
                 self.snapshot = fallback;
                 self.pending_action = None;
+                self.show_confirm = false;
             }
             Err(mpsc::TryRecvError::Empty) => {}
             Err(mpsc::TryRecvError::Disconnected) => {
                 self.pending_action = None;
+                self.show_confirm = false;
             }
         }
-    }
-
-    fn process_pending_commands(&mut self, ctx: &egui::Context) {
-        let Some(command) = self.pending_command.take() else {
-            return;
-        };
-
-        match command {
-            Command::InstallNow => {
-                self.notification_dismissed = true;
-                self.spawn_action(|service| {
-                    let _ = service.dismiss_pending_notification();
-                    service.install_or_update_now()
-                });
-            }
-            Command::DismissNotification => {
-                self.notification_dismissed = true;
-                self.spawn_action(|service| service.dismiss_pending_notification());
-            }
-        }
-
-        ctx.request_repaint();
     }
 
     fn spawn_action(
@@ -97,12 +70,26 @@ impl HeliumUpdaterApp {
 
         self.pending_action = Some(receiver);
     }
+
+    fn start_install(&mut self, restart_after: bool) {
+        self.notification_dismissed = true;
+        self.show_confirm = false;
+        self.spawn_action(move |service| {
+            let _ = service.dismiss_pending_notification();
+            service.install_or_update_now(restart_after)
+        });
+    }
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum ConfirmResult {
+    Install,
+    Cancel,
 }
 
 impl eframe::App for HeliumUpdaterApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.poll_pending_action();
-        self.process_pending_commands(ctx);
 
         egui::CentralPanel::default()
             .frame(Frame::default().fill(Color32::from_rgb(244, 240, 230)).inner_margin(egui::Margin::symmetric(8, 12)))
@@ -143,11 +130,33 @@ impl eframe::App for HeliumUpdaterApp {
 
                         if let Some(ref notification) = self.snapshot.pending_update_notification {
                             if !self.notification_dismissed {
-                                if let Some(command) = notification_banner(ui, notification) {
-                                    self.pending_command = Some(command);
+                                if let Some(result) = update_notification_banner(ui, notification, self.is_busy()) {
+                                    match result {
+                                        ConfirmResult::Install => {
+                                            self.show_confirm = true;
+                                        }
+                                        ConfirmResult::Cancel => {
+                                            self.notification_dismissed = true;
+                                            self.spawn_action(|service| service.dismiss_pending_notification());
+                                        }
+                                    }
                                 }
                                 ui.add_space(12.0);
                             }
+                        }
+
+                        if self.show_confirm {
+                            if let Some(result) = confirm_dialog(ui) {
+                                match result {
+                                    ConfirmResult::Install => {
+                                        self.start_install(true);
+                                    }
+                                    ConfirmResult::Cancel => {
+                                        self.show_confirm = false;
+                                    }
+                                }
+                            }
+                            ui.add_space(12.0);
                         }
 
                         let wide_layout = ui.available_width() >= 760.0;
@@ -199,7 +208,7 @@ impl eframe::App for HeliumUpdaterApp {
                             let mut automatic_updates = self.snapshot.automatic_updates_enabled;
                             let changed = ui
                                 .add_enabled(
-                                    !self.is_busy(),
+                                    !self.is_busy() && !self.show_confirm,
                                     egui::Checkbox::new(
                                         &mut automatic_updates,
                                         "Automatic daily updates",
@@ -261,16 +270,17 @@ impl eframe::App for HeliumUpdaterApp {
                         .fill(Color32::from_rgb(150, 89, 76));
 
                         let install_enabled = !self.is_busy()
+                            && !self.show_confirm
                             && (!self.snapshot.is_installed
                                 || self.snapshot.update_available != Some(false));
                         let delete_task_enabled =
-                            !self.is_busy() && self.snapshot.scheduled_task_present;
+                            !self.is_busy() && !self.show_confirm && self.snapshot.scheduled_task_present;
 
                         if wide_layout {
                             ui.horizontal(|ui| {
                                 if ui
                                     .add_enabled(
-                                        !self.is_busy(),
+                                        !self.is_busy() && !self.show_confirm,
                                         check_button.min_size(egui::vec2(180.0, 42.0)),
                                     )
                                     .clicked()
@@ -285,7 +295,11 @@ impl eframe::App for HeliumUpdaterApp {
                                     )
                                     .clicked()
                                 {
-                                    self.spawn_action(|service| service.install_or_update_now());
+                                    if self.service.check_helium_running().unwrap_or(false) {
+                                        self.show_confirm = true;
+                                    } else {
+                                        self.start_install(false);
+                                    }
                                 }
 
                                 if ui
@@ -303,7 +317,7 @@ impl eframe::App for HeliumUpdaterApp {
 
                             if ui
                                 .add_enabled(
-                                    !self.is_busy(),
+                                    !self.is_busy() && !self.show_confirm,
                                     check_button.min_size(egui::vec2(full_width, 42.0)),
                                 )
                                 .clicked()
@@ -318,7 +332,11 @@ impl eframe::App for HeliumUpdaterApp {
                                 )
                                 .clicked()
                             {
-                                self.spawn_action(|service| service.install_or_update_now());
+                                if self.service.check_helium_running().unwrap_or(false) {
+                                    self.show_confirm = true;
+                                } else {
+                                    self.start_install(false);
+                                }
                             }
 
                             if ui
@@ -397,6 +415,125 @@ impl eframe::App for HeliumUpdaterApp {
     }
 }
 
+fn update_notification_banner(ui: &mut egui::Ui, message: &str, is_busy: bool) -> Option<ConfirmResult> {
+    let mut result = None;
+
+    Frame::group(ui.style())
+        .fill(Color32::from_rgb(255, 243, 205))
+        .stroke(egui::Stroke::new(1.5, Color32::from_rgb(236, 183, 85)))
+        .inner_margin(egui::Margin::symmetric(14, 10))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.vertical(|ui| {
+                    ui.label(
+                        RichText::new("Update requires your attention")
+                            .size(15.0)
+                            .strong()
+                            .color(Color32::from_rgb(133, 100, 4)),
+                    );
+                    ui.add_space(4.0);
+                    ui.label(
+                        RichText::new(message)
+                            .size(14.0)
+                            .color(Color32::from_rgb(91, 74, 17)),
+                    );
+                });
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if !is_busy {
+                        if ui
+                            .add(
+                                egui::Button::new(
+                                    RichText::new("Install now")
+                                        .size(14.0)
+                                        .color(Color32::WHITE),
+                                )
+                                .fill(Color32::from_rgb(52, 94, 83))
+                                .min_size(egui::vec2(110.0, 32.0)),
+                            )
+                            .clicked()
+                        {
+                            result = Some(ConfirmResult::Install);
+                        }
+                    }
+                    ui.add_space(8.0);
+                    if ui
+                        .add(
+                            egui::Button::new(
+                                RichText::new("Dismiss")
+                                    .size(14.0)
+                                    .color(Color32::from_rgb(91, 74, 17)),
+                            )
+                            .fill(Color32::from_rgb(245, 238, 219))
+                            .min_size(egui::vec2(80.0, 32.0)),
+                        )
+                        .clicked()
+                    {
+                        result = Some(ConfirmResult::Cancel);
+                    }
+                });
+            });
+        });
+
+    result
+}
+
+fn confirm_dialog(ui: &mut egui::Ui) -> Option<ConfirmResult> {
+    let mut result = None;
+
+    Frame::group(ui.style())
+        .fill(Color32::from_rgb(255, 240, 225))
+        .stroke(egui::Stroke::new(1.5, Color32::from_rgb(236, 183, 85)))
+        .inner_margin(egui::Margin::symmetric(14, 12))
+        .show(ui, |ui| {
+            ui.label(
+                RichText::new("Helium is currently running")
+                    .size(16.0)
+                    .strong()
+                    .color(Color32::from_rgb(133, 100, 4)),
+            );
+            ui.add_space(6.0);
+            ui.label(
+                RichText::new("The updater will close Helium, install the update, and then restart the browser.")
+                    .size(14.0)
+                    .color(Color32::from_rgb(91, 74, 17)),
+            );
+            ui.add_space(10.0);
+            ui.horizontal(|ui| {
+                if ui
+                    .add(
+                        egui::Button::new(
+                            RichText::new("Close Helium & Install")
+                                .size(14.0)
+                                .color(Color32::WHITE),
+                        )
+                        .fill(Color32::from_rgb(52, 94, 83))
+                        .min_size(egui::vec2(180.0, 36.0)),
+                    )
+                    .clicked()
+                {
+                    result = Some(ConfirmResult::Install);
+                }
+                ui.add_space(8.0);
+                if ui
+                    .add(
+                        egui::Button::new(
+                            RichText::new("Cancel")
+                                .size(14.0)
+                                .color(Color32::from_rgb(91, 74, 17)),
+                        )
+                        .fill(Color32::from_rgb(245, 238, 219))
+                        .min_size(egui::vec2(100.0, 36.0)),
+                    )
+                    .clicked()
+                {
+                    result = Some(ConfirmResult::Cancel);
+                }
+            });
+        });
+
+    result
+}
+
 fn info_card(ui: &mut egui::Ui, label: &str, value: &str, detail: Option<&str>) {
     Frame::group(ui.style())
         .fill(Color32::from_rgb(248, 245, 237))
@@ -436,66 +573,6 @@ fn full_width_group(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui))
             ui.set_width(ui.available_width());
             add_contents(ui);
         });
-}
-
-fn notification_banner(ui: &mut egui::Ui, message: &str) -> Option<Command> {
-    let mut command = None;
-
-    Frame::group(ui.style())
-        .fill(Color32::from_rgb(255, 243, 205))
-        .stroke(egui::Stroke::new(1.5, Color32::from_rgb(236, 183, 85)))
-        .inner_margin(egui::Margin::symmetric(14, 10))
-        .show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.vertical(|ui| {
-                    ui.label(
-                        RichText::new("Update requires your attention")
-                            .size(15.0)
-                            .strong()
-                            .color(Color32::from_rgb(133, 100, 4)),
-                    );
-                    ui.add_space(4.0);
-                    ui.label(
-                        RichText::new(message)
-                            .size(14.0)
-                            .color(Color32::from_rgb(91, 74, 17)),
-                    );
-                });
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui
-                        .add(
-                            egui::Button::new(
-                                RichText::new("Install now")
-                                    .size(14.0)
-                                    .color(Color32::WHITE),
-                            )
-                            .fill(Color32::from_rgb(52, 94, 83))
-                            .min_size(egui::vec2(110.0, 32.0)),
-                        )
-                        .clicked()
-                    {
-                        command = Some(Command::InstallNow);
-                    }
-                    ui.add_space(8.0);
-                    if ui
-                        .add(
-                            egui::Button::new(
-                                RichText::new("Dismiss")
-                                    .size(14.0)
-                                    .color(Color32::from_rgb(91, 74, 17)),
-                            )
-                            .fill(Color32::from_rgb(245, 238, 219))
-                            .min_size(egui::vec2(80.0, 32.0)),
-                        )
-                        .clicked()
-                    {
-                        command = Some(Command::DismissNotification);
-                    }
-                });
-            });
-        });
-
-    command
 }
 
 fn configure_theme(ctx: &egui::Context) {

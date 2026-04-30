@@ -4,6 +4,7 @@ use crate::{
     github::{ReleaseAsset, ReleaseInfo, fetch_latest_release},
     helium::{
         InstalledHelium, NativeArchitecture, close_running, detect_installed_helium, is_running,
+        launch,
     },
     logging,
     paths::AppPaths,
@@ -151,6 +152,14 @@ impl AppService {
         Ok(snapshot)
     }
 
+    pub fn check_helium_running(&self) -> AppResult<bool> {
+        let installed = detect_installed_helium()?;
+        match installed {
+            Some(helium) => is_running(&helium),
+            None => Ok(false),
+        }
+    }
+
     pub fn check_for_updates(&self) -> AppResult<DashboardSnapshot> {
         self.startup_refresh()
     }
@@ -176,7 +185,7 @@ impl AppService {
         Ok(snapshot)
     }
 
-    pub fn install_or_update_now(&self) -> AppResult<DashboardSnapshot> {
+    pub fn install_or_update_now(&self, restart_after: bool) -> AppResult<DashboardSnapshot> {
         self.with_operation_lock(|service| {
             logging::info(
                 &service.paths,
@@ -185,6 +194,8 @@ impl AppService {
 
             let mut state = State::load(&service.paths)?;
             let installed = detect_installed_helium()?;
+            let _helium_was_running = installed.as_ref().map_or(false, |h| is_running(h).unwrap_or(false));
+
             let release = fetch_latest_release()?;
             let update_available =
                 service.compute_update_available(installed.as_ref(), &release, &state);
@@ -203,7 +214,7 @@ impl AppService {
 
             if let Some(helium) = installed.as_ref() {
                 if is_running(helium)? {
-                    logging::warn(&service.paths, "Helium is running; attempting to close it for manual install.");
+                    logging::warn(&service.paths, "Helium is running; closing it for manual install.");
                     close_running(helium)?;
                 }
             }
@@ -215,6 +226,15 @@ impl AppService {
             thread::sleep(Duration::from_secs(2));
 
             let refreshed_install = detect_installed_helium()?;
+
+            if restart_after {
+                if let Some(ref helium) = refreshed_install {
+                    logging::info(&service.paths, "Restarting Helium after update.");
+                    if let Err(error) = launch(helium) {
+                        logging::warn(&service.paths, format!("Failed to restart Helium: {error}"));
+                    }
+                }
+            }
 
             state.last_checked_at = Some(current_timestamp()?);
             state.last_seen_release_tag = Some(release.tag_name.clone());
@@ -468,7 +488,7 @@ impl AppService {
         let script = format!(
             r#"
 $headers = @{{
-    'User-Agent' = 'HeliumBrowserUpdater/0.3.0'
+    'User-Agent' = 'HeliumBrowserUpdater/0.3.1'
     'Accept' = 'application/octet-stream'
 }}
 Invoke-WebRequest -Headers $headers -Uri '{url}' -OutFile '{destination}'

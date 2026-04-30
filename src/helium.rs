@@ -223,6 +223,28 @@ if ($running.Count -gt 0) {{
     powershell::run_script(&script).map(|_| ())
 }
 
+pub fn launch(helium: &InstalledHelium) -> AppResult<()> {
+    let exe_path_buf;
+    let exe_path: &std::path::Path = match helium.executable_path.as_ref() {
+        Some(path) => path,
+        None => {
+            let install_root = helium.install_root.as_ref()
+                .ok_or_else(|| "no Helium executable path available to restart the browser".to_owned())?;
+            exe_path_buf = install_root.join("helium.exe");
+            &exe_path_buf
+        }
+    };
+
+    let script = format!(
+        r#"
+Start-Process -FilePath '{exe_path}' -WindowStyle Minimized
+"#,
+        exe_path = powershell::literal(&exe_path.to_string_lossy()),
+    );
+
+    powershell::run_script(&script).map(|_| ())
+}
+
 #[derive(Debug, Deserialize)]
 struct DetectedHelium {
     install_root: Option<String>,
